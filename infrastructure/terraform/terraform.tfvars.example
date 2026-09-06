@@ -1,0 +1,20 @@
+aws_region   = "ap-south-2"
+project_name = "CloudVault"
+
+vpc_cidr              = "10.0.0.0/16"
+public_subnet_cidr    = "10.0.1.0/24"
+private_subnet_a_cidr = "10.0.2.0/24"
+private_subnet_b_cidr = "10.0.3.0/24"
+
+# SSH disabled. For future access, replace null with your actual public IPv4 /32.
+allowed_ssh_cidr = null
+
+# Null generates a unique name; alternatively supply an available global name.
+s3_bucket_name = null
+
+db_name           = "cloudvault"
+db_username       = "cloudvault_admin"
+db_password       = "REPLACE_WITH_A_PRIVATE_PASSWORD"
+db_instance_class = "db.t4g.micro"
+ec2_instance_type = "t3.micro"
+key_name          = null
