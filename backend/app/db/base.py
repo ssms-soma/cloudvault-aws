@@ -1,1 +1,6 @@
-"""Placeholder for the SQLAlchemy declarative base in the next AWS phase."""
+"""Shared SQLAlchemy model metadata."""
+from sqlalchemy.orm import DeclarativeBase
+
+
+class Base(DeclarativeBase):
+    pass

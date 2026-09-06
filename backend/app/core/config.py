@@ -1,4 +1,4 @@
-"""Load optional settings from the environment or project-root .env file."""
+"""Load settings from the environment or project-root .env; PostgreSQL is required at startup."""
 
 from pathlib import Path
 

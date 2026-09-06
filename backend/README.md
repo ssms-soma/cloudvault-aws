@@ -1,24 +1,27 @@
 # CloudVault backend
 
-Minimal FastAPI application with a health endpoint and a document router reserved for the next AWS phase.
+Local FastAPI document API using PostgreSQL metadata and filesystem storage.
+AWS is not used. Follow [Local Backend Setup](../README.md#local-backend-setup)
+to create the PostgreSQL role/database and project-root .env first.
 
-From `cloudvault-aws/`, create the local environment:
+From this directory in PowerShell:
 
 ```powershell
-python -m venv backend/.venv
-backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
-cd backend
+.venv/Scripts/python.exe -m pip install -r requirements.txt
 .venv/Scripts/python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-On macOS/Linux use `python3` to create the environment and `.venv/bin/python` to run it.
+API docs: http://localhost:8000/docs. Health: http://localhost:8000/health.
+Document upload, list, metadata, download, and delete are under /api/documents.
+Startup creates missing tables but does not migrate existing tables.
+Files are stored in backend/storage/documents/ and ignored by Git.
 
-- Health: http://localhost:8000/health
-- Interactive API docs: http://localhost:8000/docs
-- Expected health response: `{"status":"ok","service":"cloudvault-api"}`
+Run focused tests:
 
-Optionally copy the project-root `.env.example` to `.env`. Settings load that file and environment variables; environment variables take precedence. Blank settings are valid for this phase.
+```powershell
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+.venv/Scripts/python.exe -m pytest -q
+```
 
-The document router has no endpoints yet. Model, schema, database, and service modules are placeholders only. SQLAlchemy, psycopg, boto3, and python-multipart are included for the planned document integration; the application does not use them yet or contact AWS/PostgreSQL.
-
-See [the project README](../README.md) for architecture, frontend setup, and security guidance. The `tests/` package is reserved for future tests.
+Tests use isolated SQLite and temporary files and do not verify PostgreSQL.
+See the root README for setup, endpoints, limitations, and planned architecture.

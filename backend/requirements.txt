@@ -4,8 +4,10 @@ uvicorn>=0.30,<1
 pydantic-settings>=2.6,<3
 python-dotenv>=1,<2
 
-# Reserved for the planned document and AWS phase; no connections are made.
+# Local PostgreSQL metadata and multipart uploads.
 sqlalchemy>=2.0,<3
 psycopg[binary]>=3.2,<4
-boto3>=1.35,<2
 python-multipart>=0.0.18,<1
+
+# Reserved for the future AWS storage phase; unused locally.
+boto3>=1.35,<2
