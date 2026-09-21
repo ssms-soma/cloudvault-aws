@@ -6,6 +6,7 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-temp*/
 .coverage
 htmlcov/
 node_modules/
@@ -21,3 +22,21 @@ Desktop.ini
 *.swo
 *.log
 backend/storage/
+*.zip
+
+# Local Terraform state, provider cache, variable values, and saved plans.
+.terraform/
+.terraform-tools/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*.tfplan
+*.plan
+tfplan
+plan.out
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+!terraform.tfvars.example
+# Keep .terraform.lock.hcl available for version control.
