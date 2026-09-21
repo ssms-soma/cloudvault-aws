@@ -1,212 +1,142 @@
 # CloudVault
 
-Secure Cloud Document Management.
+CloudVault is a small document management application deployed on AWS for a university cloud computing assignment. A React frontend uses a FastAPI API to upload, list, download, and delete documents. PostgreSQL stores metadata; the selected storage backend holds file contents.
 
-CloudVault has a working document API using FastAPI, SQLAlchemy 2.x,
-PostgreSQL, and selectable local filesystem or private S3 storage. The React + Vite dashboard supports
-document upload, listing, download, and deletion through the API.
+## Assignment objective
 
-**CloudVault is deployed and its health, upload, list, download, and delete flows have been verified on AWS.**
+Design and deploy a cloud application using a VPC, public and private networks, EC2, RDS, and S3, with secure communication between the application, database, and storage layers.
 
-## Current features
+## Key features
 
-- Upload files up to 10 MiB; validate filenames and reject empty uploads.
-- List documents newest first, retrieve metadata, download, and delete.
-- UUID-based disk filenames and relative storage keys in API responses.
-- Cleanup of saved files when metadata insertion fails.
-- Local CORS restricted to http://localhost:5173. Production can use a same-origin Nginx proxy.
-- Health endpoint, interactive API docs, and focused backend tests.
+- Upload one document at a time, up to 10 MiB; reject empty files and invalid filenames.
+- List documents newest first, view metadata, download files, and delete documents.
+- Store metadata in PostgreSQL and file contents in local storage or private S3.
+- Check database and storage availability through `/health`.
 
 ## Architecture
 
-| Component | Local development | AWS deployment |
-| --- | --- | --- |
-| Backend | Python 3.12+, FastAPI, Uvicorn | FastAPI under systemd on EC2 |
-| Database | Local PostgreSQL, SQLAlchemy, psycopg | Amazon RDS PostgreSQL |
-| Storage | Local filesystem by default; S3 selectable | Private Amazon S3 bucket |
-| Frontend | React + Vite, Node.js 22.12+ | Static build served by Nginx on EC2 |
-| Configuration | pydantic-settings, python-dotenv | EC2 environment file and IAM instance profile |
+```text
+Internet / browser
+        |
+        v
+EC2 in public subnet (port 80)
+  Nginx serves React and proxies /api and /health
+        |
+        v
+  FastAPI / Uvicorn (127.0.0.1:8000, managed by systemd)
+        |                               |
+        v                               v
+RDS PostgreSQL                    Private S3 bucket
+in two private subnets            accessed through EC2 IAM role
+```
+
+Terraform provisions a custom VPC, Internet Gateway, public and private route tables, one public EC2 subnet, and two private subnets for the RDS DB subnet group. EC2 has a public address. RDS has `publicly_accessible = false`; its security group permits TCP 5432 only from the EC2 security group. The S3 bucket has Block Public Access enabled. FastAPI is reachable through Nginx and is not exposed directly on port 8000.
+
+## AWS services used
+
+| Service | Purpose |
+| --- | --- |
+| VPC and subnets | Separate the public application host from the private database |
+| EC2 | Host Nginx, React, and FastAPI |
+| RDS PostgreSQL | Store document metadata |
+| S3 | Store uploaded documents privately |
+| IAM | Give EC2 bucket-scoped S3 permissions through an instance profile |
+| Security Groups | Restrict inbound web and database traffic |
+| Systems Manager Session Manager | Access EC2 without opening the application port or storing an SSH key in the repository |
+
+## Security design
+
+EC2 uses its IAM role for S3 access; no AWS access keys are stored on the instance or in the repository. S3 Block Public Access, server-side encryption, and an HTTPS-only bucket policy are defined in Terraform. RDS is private and accepts PostgreSQL traffic only from the EC2 security group. The application binds to loopback behind Nginx. Credentials belong in ignored local configuration or a restricted EC2 environment file, never in tracked files.
+
+The current public web endpoint uses **HTTP on port 80**. It does not provide HTTPS or application-level authentication. Use dummy documents only; see [Known limitations](#known-limitations).
+
+## Technology stack
+
+- Frontend: React 19 and Vite 8 (Node.js 22.12+ for builds).
+- Backend: Python, FastAPI, Uvicorn, SQLAlchemy 2, psycopg, and boto3.
+- Deployment: Amazon Linux 2023, Nginx, systemd, Terraform, AWS CLI, and SSM.
+
+## Repository structure
 
 ```text
-Browser → EC2/Nginx → React static frontend
-                    → /api and /health → FastAPI on 127.0.0.1:8000
-                                         ├→ private RDS PostgreSQL
-                                         └→ private S3 through EC2 IAM role
+backend/                  FastAPI app, database model, storage backends, tests
+frontend/                 React dashboard, API client, Vite build
+infrastructure/terraform/ VPC, EC2, RDS, S3, IAM, and security groups
+deployment/               Nginx and systemd configuration templates
+docs/ architecture/ screenshots/  Assignment documentation folders
 ```
 
-Terraform provisions a custom VPC, an Internet Gateway and route tables, one
-public subnet for EC2, and two private subnets for the RDS DB subnet group.
-Security Groups allow PostgreSQL port 5432 only from the EC2 group; RDS is not
-publicly accessible. S3 Block Public Access is enabled. The EC2 IAM instance
-profile grants bucket-scoped S3 access without static AWS keys. AWS CLI and
-Systems Manager (SSM) were used for deployment and verification.
+## Local development
 
-Local file storage is backend/storage/documents/. Set STORAGE_BACKEND=s3 with
-AWS_REGION and S3_BUCKET_NAME to use private S3 through boto3's credential chain.
-On EC2, the instance profile supplies credentials; do not put AWS access keys in .env.
-
-## Local Backend Setup
-
-### 1. Start PostgreSQL and create a database
-
-PostgreSQL must be running locally. In PowerShell, connect using your existing
-administrator password (adjust the installation path/version if needed):
-
-```powershell
-& "C:\Program Files\PostgreSQL\17\bin\psql.exe" -h localhost -U postgres -d postgres
-```
-
-For a new role/database, run in psql:
-
-```sql
-CREATE ROLE cloudvault_user LOGIN;
-\password cloudvault_user
-CREATE DATABASE cloudvault OWNER cloudvault_user;
-\q
-```
-
-The \password command prompts for your chosen password without embedding it in
-SQL. If the role or database exists, reuse it instead of running CREATE again.
-On macOS/Linux use psql -h localhost -U postgres -d postgres.
-
-### 2. Create the environment file
-
-From the project root:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Edit the project-root .env to contain:
-
-```dotenv
-DATABASE_URL=postgresql+psycopg://cloudvault_user:YOUR_LOCAL_PASSWORD@localhost:5432/cloudvault
-AWS_REGION=
-S3_BUCKET_NAME=
-STORAGE_BACKEND=local
-```
-
-Replace YOUR_LOCAL_PASSWORD with the password you set. URL-encode special
-characters in the password (for example @ becomes %40). This is a placeholder,
-not a working credential. Leave AWS settings blank. Environment variables
-override the project-root .env file.
-
-### 3. Install dependencies and start FastAPI
+Local mode requires PostgreSQL and stores files under `backend/storage/documents/`. Create a PostgreSQL role and database using your own credentials, then copy `.env.example` to the project-root `.env` and set `DATABASE_URL` and `STORAGE_BACKEND=local`. The `.env` file is ignored by Git. The URL in `.env.example` is a placeholder; URL-encode special characters in your own password.
 
 From the project root in PowerShell:
 
 ```powershell
+Copy-Item .env.example .env
 python -m venv backend/.venv
 backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
 cd backend
 .venv/Scripts/python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-On macOS/Linux use python3 to create the venv, backend/.venv/bin/python for
-installation, and .venv/bin/python when inside backend/.
-
-Startup requires a valid PostgreSQL connection and creates missing tables with
-Base.metadata.create_all(). It does not migrate existing tables; Alembic can be
-introduced when migrations are needed. Storage folders are created on first upload.
-
-### 4. Try the API
-
-Open http://localhost:8000/docs to try uploads and document operations.
-
-| Method | Path | Success |
-| --- | --- | --- |
-| GET | /health | 200 when database and selected storage are available; otherwise 503 |
-| POST | /api/documents | 201, multipart field named file |
-| GET | /api/documents | 200, newest first |
-| GET | /api/documents/{id} | 200, metadata |
-| GET | /api/documents/{id}/download | 200, attachment |
-| DELETE | /api/documents/{id} | 200, deletion confirmation |
-
-```powershell
-curl.exe http://localhost:8000/health
-curl.exe -F "file=@C:/path/to/report.pdf" http://localhost:8000/api/documents
-curl.exe http://localhost:8000/api/documents
-curl.exe http://localhost:8000/api/documents/1
-curl.exe http://localhost:8000/api/documents/1/download -o downloaded-report.pdf
-curl.exe -X DELETE http://localhost:8000/api/documents/1
-```
-
-Missing documents/files return 404; invalid/empty files return 400; missing
-multipart fields return 422; oversized files return 413. Database errors return
-503 and filesystem errors return 500, with generic messages. Health checks
-database connectivity and selected storage availability on each request.
-
-## Tests
-
-From backend/:
-
-```powershell
-.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
-.venv/Scripts/python.exe -m pytest -q
-```
-
-Tests use an in-memory SQLite database and temporary storage, overriding the
-session dependency and bypassing PostgreSQL startup. They verify health,
-validation, file round trips, ordering, missing metadata/files, failure cleanup,
-path rejection, local CORS, and mocked S3 operations. They do not validate PostgreSQL connectivity,
-timezone behavior, or PostgreSQL startup table creation. Verify those through
-the running API after configuring your local database.
-
-## Frontend
-
-From frontend/:
+In another terminal, from `frontend/`:
 
 ```powershell
 npm.cmd ci
 npm.cmd run dev -- --port 5173 --strictPort
-npm.cmd run build
 ```
 
-Use npm on macOS/Linux. Open the URL printed by Vite, usually
-http://localhost:5173. Start the backend in a separate terminal first.
-The Vite dev server proxies /api to http://127.0.0.1:8000. Keep the frontend on
-port 5173 to match the backend's local CORS origin. `VITE_API_BASE_URL` can
-override the API origin; leave it unset for local proxying and same-origin EC2.
+Open `http://localhost:5173`. Vite proxies `/api` to the local backend. The backend allows that local origin through CORS. Startup creates missing tables; it does not migrate existing schemas.
 
-Choose or drop one file, then click Upload document. The dashboard validates
-empty files and the 10 MiB limit, shows loading/success/error feedback, and
-refreshes the document list after uploads and deletions. Documents show their
-original filename, type, readable size, and local upload date/time. Downloads
-preserve the original filename; deletion asks for confirmation. Use Refresh
-to retry if the API is temporarily unavailable.
+## AWS deployment overview
 
-## Infrastructure as Code
+Terraform provisions the infrastructure. The application runs on EC2: Nginx serves the Vite production build and proxies `/api` and `/health` to Uvicorn, which systemd keeps running on `127.0.0.1:8000`. In AWS mode, FastAPI connects to private RDS PostgreSQL and uses boto3 with the EC2 instance profile to access private S3. AWS CLI was used for verification and SSM Session Manager for EC2 access. See [deployment](deployment/README.md) and [Terraform](infrastructure/terraform/README.md) for the repository configuration.
 
-[Terraform](infrastructure/terraform/README.md) provisions the VPC, networking,
-EC2, private RDS PostgreSQL, private S3, IAM, and Security Groups. RDS remains
-single-AZ and no NAT Gateway or load balancer is used. Nginx serves React and
-proxies the API to a loopback Uvicorn process managed by systemd. The
-[deployment files](deployment/README.md) document the EC2 service configuration.
+## Environment variables
 
-## Project directories
+| Variable | Local mode | AWS mode |
+| --- | --- | --- |
+| `DATABASE_URL` | Local `postgresql+psycopg` connection URL | Private RDS `postgresql+psycopg` connection URL |
+| `STORAGE_BACKEND` | `local` (default) | `s3` |
+| `AWS_REGION` | Leave blank | AWS deployment region |
+| `S3_BUCKET_NAME` | Leave blank | Private document bucket name |
 
-- backend/app/api/routes/: document endpoints.
-- backend/app/models/ and schemas/: ORM and public response definitions.
-- backend/app/db/: declarative base and synchronous sessions.
-- backend/app/services/: metadata operations, local file storage, and private S3 storage.
-- backend/tests/: focused API tests.
-- frontend/: React document dashboard and centralized API client.
-- architecture/, screenshots/, docs/: tracked documentation folders.
+Only placeholders belong in `.env.example`. The frontend normally uses same-origin `/api`; `VITE_API_BASE_URL` can override its API origin when needed.
 
-## Security and limitations
+## API endpoints
 
-Never commit credentials. .env and backend/storage/ are ignored by Git. The
-.env.example contains a placeholder URL only. Local mode needs no AWS credentials;
-S3 mode uses the standard boto3 credential chain and the EC2 instance profile.
-API responses contain relative keys, never absolute filesystem paths. Original
-filenames are never used as disk filenames. Downloads are binary attachments;
-client-provided MIME metadata is not trusted for rendering.
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Check database and selected storage; return 503 if unavailable |
+| POST | `/api/documents` | Upload a file in multipart field `file` |
+| GET | `/api/documents` | List document metadata |
+| GET | `/api/documents/{id}` | Get one document's metadata |
+| GET | `/api/documents/{id}/download` | Stream a private file as an attachment |
+| DELETE | `/api/documents/{id}` | Delete the document and its stored file |
 
-There is no authentication. Keep local Uvicorn bound to loopback and restrict
-public demo access. The 10 MiB limit
-applies while copying parsed uploads to storage, not to network request bodies.
-Filesystem and database operations are not one atomic transaction. A process
-crash or failed cleanup can leave them inconsistent. Deletion temporarily renames
-the file and restores it if the metadata commit fails. A crash during that window
-or failed final removal can leave a .pending file requiring manual reconciliation.
-Reconciliation, network request limits, and production access controls are later work.
+## Testing
+
+From `backend/`, run `.venv/Scripts/python.exe -m pytest -q`. On Windows, if pytest cannot write its default temporary directory, use `-p no:cacheprovider --basetemp=.pytest-temp-final`. The suite currently passes **27 tests**. It uses SQLite and mocked S3 interactions; it does not replace live RDS or IAM verification. From `frontend/`, `npm.cmd run build` passes. `terraform fmt -check` and `terraform validate` pass with the project-local Terraform binary.
+
+## Terraform workflow
+
+The infrastructure code is in `infrastructure/terraform/`. Its variables and outputs describe the VPC, EC2, RDS, S3, IAM, and security groups. Review `terraform plan` before any future infrastructure change. Keep local `.tfvars`, state, and saved plans out of Git. Terraform provisions infrastructure; application installation and service setup are separate EC2 deployment steps.
+
+## Verification and evidence
+
+The deployed `/health` response was `{"status":"healthy","database":"connected","storage":"available"}`. Upload, list, download, and delete were verified through the deployed UI. AWS CLI checks confirmed the private RDS configuration, S3 Block Public Access, security group rule, and instance profile. Assignment diagrams and screenshots can be added under `architecture/`, `docs/`, and `screenshots/` later.
+
+## Known limitations
+
+- The web endpoint is HTTP only and the application has no user authentication. Use dummy/demo documents and limit access to assignment use.
+- RDS and S3 changes cannot form one distributed atomic transaction; failures or crashes may require reconciliation.
+- The RDS instance is single-AZ. Startup creates missing tables but does not perform schema migrations.
+
+## Cleanup
+
+Stop and destroy demo resources after the assignment to avoid unnecessary AWS charges. The S3 bucket has `force_destroy = false`, so remove its objects before a planned `terraform destroy`; export any data that must be kept first. Review the destroy plan because the demo RDS settings do not retain a final snapshot.
+
+## Future improvements
+
+Add HTTPS, user authentication, schema migrations, and automated reconciliation between PostgreSQL metadata and S3 objects before using real documents.
