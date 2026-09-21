@@ -2,11 +2,11 @@
 
 Secure Cloud Document Management.
 
-CloudVault has a working local document API using FastAPI, SQLAlchemy 2.x,
-PostgreSQL, and filesystem storage. The React + Vite dashboard supports local
+CloudVault has a working document API using FastAPI, SQLAlchemy 2.x,
+PostgreSQL, and selectable local filesystem or private S3 storage. The React + Vite dashboard supports
 document upload, listing, download, and deletion through the API.
 
-**AWS infrastructure will be added in the next phase. No AWS resources are configured.**
+**CloudVault is deployed and its health, upload, list, download, and delete flows have been verified on AWS.**
 
 ## Current features
 
@@ -14,31 +14,36 @@ document upload, listing, download, and deletion through the API.
 - List documents newest first, retrieve metadata, download, and delete.
 - UUID-based disk filenames and relative storage keys in API responses.
 - Cleanup of saved files when metadata insertion fails.
-- Local CORS restricted to http://localhost:5173.
+- Local CORS restricted to http://localhost:5173. Production can use a same-origin Nginx proxy.
 - Health endpoint, interactive API docs, and focused backend tests.
 
-## Tech stack and planned architecture
+## Architecture
 
-| Component | Current | Planned production |
+| Component | Local development | AWS deployment |
 | --- | --- | --- |
-| Backend | Python 3.12+, FastAPI, Uvicorn | FastAPI on EC2 |
+| Backend | Python 3.12+, FastAPI, Uvicorn | FastAPI under systemd on EC2 |
 | Database | Local PostgreSQL, SQLAlchemy, psycopg | Amazon RDS PostgreSQL |
-| Storage | Local filesystem | Private Amazon S3 bucket |
-| Frontend | React + Vite, Node.js 22.12+ | Deployment to be designed |
-| Configuration | pydantic-settings, python-dotenv | Environment and IAM roles |
+| Storage | Local filesystem by default; S3 selectable | Private Amazon S3 bucket |
+| Frontend | React + Vite, Node.js 22.12+ | Static build served by Nginx on EC2 |
+| Configuration | pydantic-settings, python-dotenv | EC2 environment file and IAM instance profile |
 
 ```text
-Internet → EC2/FastAPI → private RDS PostgreSQL
-           EC2/FastAPI → private S3 bucket
+Browser → EC2/Nginx → React static frontend
+                    → /api and /health → FastAPI on 127.0.0.1:8000
+                                         ├→ private RDS PostgreSQL
+                                         └→ private S3 through EC2 IAM role
 ```
 
-The planned VPC contains public/private subnets, with EC2 in a public subnet and
-RDS in private subnets. S3 is outside the subnets and private, accessed by EC2
-through a scoped IAM role. Provisioning and deployment are future work.
+Terraform provisions a custom VPC, an Internet Gateway and route tables, one
+public subnet for EC2, and two private subnets for the RDS DB subnet group.
+Security Groups allow PostgreSQL port 5432 only from the EC2 group; RDS is not
+publicly accessible. S3 Block Public Access is enabled. The EC2 IAM instance
+profile grants bucket-scoped S3 access without static AWS keys. AWS CLI and
+Systems Manager (SSM) were used for deployment and verification.
 
-Current file storage is backend/storage/documents/. The existing s3_service.py
-implements a small local storage interface that can be replaced with S3 later.
-boto3 remains a reserved dependency and is not called.
+Local file storage is backend/storage/documents/. Set STORAGE_BACKEND=s3 with
+AWS_REGION and S3_BUCKET_NAME to use private S3 through boto3's credential chain.
+On EC2, the instance profile supplies credentials; do not put AWS access keys in .env.
 
 ## Local Backend Setup
 
@@ -78,6 +83,7 @@ Edit the project-root .env to contain:
 DATABASE_URL=postgresql+psycopg://cloudvault_user:YOUR_LOCAL_PASSWORD@localhost:5432/cloudvault
 AWS_REGION=
 S3_BUCKET_NAME=
+STORAGE_BACKEND=local
 ```
 
 Replace YOUR_LOCAL_PASSWORD with the password you set. URL-encode special
@@ -109,7 +115,7 @@ Open http://localhost:8000/docs to try uploads and document operations.
 
 | Method | Path | Success |
 | --- | --- | --- |
-| GET | /health | 200, API availability |
+| GET | /health | 200 when database and selected storage are available; otherwise 503 |
 | POST | /api/documents | 201, multipart field named file |
 | GET | /api/documents | 200, newest first |
 | GET | /api/documents/{id} | 200, metadata |
@@ -127,8 +133,8 @@ curl.exe -X DELETE http://localhost:8000/api/documents/1
 
 Missing documents/files return 404; invalid/empty files return 400; missing
 multipart fields return 422; oversized files return 413. Database errors return
-503 and filesystem errors return 500, with generic messages. Health is an API
-availability check, not an ongoing database readiness probe.
+503 and filesystem errors return 500, with generic messages. Health checks
+database connectivity and selected storage availability on each request.
 
 ## Tests
 
@@ -142,7 +148,7 @@ From backend/:
 Tests use an in-memory SQLite database and temporary storage, overriding the
 session dependency and bypassing PostgreSQL startup. They verify health,
 validation, file round trips, ordering, missing metadata/files, failure cleanup,
-path rejection, and local CORS. They do not validate PostgreSQL connectivity,
+path rejection, local CORS, and mocked S3 operations. They do not validate PostgreSQL connectivity,
 timezone behavior, or PostgreSQL startup table creation. Verify those through
 the running API after configuring your local database.
 
@@ -158,8 +164,9 @@ npm.cmd run build
 
 Use npm on macOS/Linux. Open the URL printed by Vite, usually
 http://localhost:5173. Start the backend in a separate terminal first.
-The centralized API client targets http://localhost:8000. Keep the frontend on
-port 5173 to match the backend's local CORS origin.
+The Vite dev server proxies /api to http://127.0.0.1:8000. Keep the frontend on
+port 5173 to match the backend's local CORS origin. `VITE_API_BASE_URL` can
+override the API origin; leave it unset for local proxying and same-origin EC2.
 
 Choose or drop one file, then click Upload document. The dashboard validates
 empty files and the 10 MiB limit, shows loading/success/error feedback, and
@@ -168,25 +175,35 @@ original filename, type, readable size, and local upload date/time. Downloads
 preserve the original filename; deletion asks for confirmation. Use Refresh
 to retry if the API is temporarily unavailable.
 
-## Project layout
+## Infrastructure as Code
+
+[Terraform](infrastructure/terraform/README.md) provisions the VPC, networking,
+EC2, private RDS PostgreSQL, private S3, IAM, and Security Groups. RDS remains
+single-AZ and no NAT Gateway or load balancer is used. Nginx serves React and
+proxies the API to a loopback Uvicorn process managed by systemd. The
+[deployment files](deployment/README.md) document the EC2 service configuration.
+
+## Project directories
 
 - backend/app/api/routes/: document endpoints.
 - backend/app/models/ and schemas/: ORM and public response definitions.
 - backend/app/db/: declarative base and synchronous sessions.
-- backend/app/services/: metadata operations and local file storage.
+- backend/app/services/: metadata operations, local file storage, and private S3 storage.
 - backend/tests/: focused API tests.
 - frontend/: React document dashboard and centralized API client.
 - architecture/, screenshots/, docs/: tracked documentation folders.
 
-## Security and local-phase limits
+## Security and limitations
 
 Never commit credentials. .env and backend/storage/ are ignored by Git. The
-.env.example contains a placeholder URL only. No AWS credentials are required.
+.env.example contains a placeholder URL only. Local mode needs no AWS credentials;
+S3 mode uses the standard boto3 credential chain and the EC2 instance profile.
 API responses contain relative keys, never absolute filesystem paths. Original
 filenames are never used as disk filenames. Downloads are binary attachments;
 client-provided MIME metadata is not trusted for rendering.
 
-There is no authentication. Keep the server bound to loopback. The 10 MiB limit
+There is no authentication. Keep local Uvicorn bound to loopback and restrict
+public demo access. The 10 MiB limit
 applies while copying parsed uploads to storage, not to network request bodies.
 Filesystem and database operations are not one atomic transaction. A process
 crash or failed cleanup can leave them inconsistent. Deletion temporarily renames

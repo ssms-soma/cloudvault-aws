@@ -1,7 +1,8 @@
-# CloudVault Terraform — Phases 1 and 2
+# CloudVault Terraform
 
-Infrastructure code for review only. **No apply has been executed and no AWS
-resources have been created by this work.** CloudVault has not been deployed.
+Terraform provisions the deployed CloudVault VPC, EC2, RDS, S3, IAM, and
+security groups. The application has been deployed and verified separately
+through AWS CLI and SSM. Review every future plan before applying changes.
 
 ## Intended architecture
 
@@ -12,7 +13,7 @@ Internet Gateway
     |
 Public subnet
     |
-EC2 / FastAPI (application deployment is a later phase)
+EC2 / Nginx / React / FastAPI
    |       |
    |       +--> private S3 bucket (IAM-controlled access)
    |
@@ -21,9 +22,8 @@ EC2 / FastAPI (application deployment is a later phase)
         one active DB instance, single-AZ
 ```
 
-Phase 1 networking, S3, security groups, and bucket-scoped IAM remain intact.
-Phase 2 adds one EC2 instance, one DB subnet group, one RDS instance, and one
-SSM managed-policy attachment (four additional managed resources).
+Networking, S3, security groups, bucket-scoped IAM, EC2, and RDS are defined
+in this directory. Application deployment uses the files under `../../deployment/`.
 
 ## Region and Availability Zones
 
@@ -46,7 +46,8 @@ uses the second. No AMI ID or AZ name is hardcoded.
 - User data only updates packages, installs Python/pip/Git, creates
   /opt/cloudvault, and enables the bundled SSM agent.
 - No application clone, secrets, database connection string, reverse proxy,
-  TLS certificate, service unit, or full deployment is installed.
+  TLS certificate, service unit, or full deployment is installed by Terraform.
+  Nginx and systemd files used for deployment are under `../../deployment/`.
 - AMI/user-data updates can replace the instance; review future plans.
 
 The existing role receives AmazonSSMManagedInstanceCore for management.
@@ -56,9 +57,8 @@ SSM permissions. A key pair is optional; `key_name = null` works with SSM.
 SSH ingress stays disabled unless `allowed_ssh_cidr` is set to one IPv4 /32.
 For SSH, supply an existing key pair in the configured region as well.
 
-The AL2023 package Python is only machine preparation. Select and validate the
-application's Python runtime during deployment; this phase does not promise
-that the local application's full runtime requirements are installed.
+The AL2023 package Python in user data is only machine preparation. The
+application runtime and dependencies are installed separately during deployment.
 
 ## RDS
 
@@ -78,7 +78,7 @@ Two subnet-group AZs make placement possible but do not enable a Multi-AZ
 standby. This deliberate single-AZ setup reduces demo cost and provides no
 Multi-AZ failover. PostgreSQL's regional default can change; review the resolved
 engine version and compatibility in each plan before applying. Confirm the
-engine/class combination is orderable in Hyderabad before deployment.
+engine/class combination remains orderable before any future replacement.
 Validation alone cannot establish regional availability.
 
 ## Security, state, and cost
@@ -88,7 +88,8 @@ and an HTTPS-only policy. IAM document permissions remain restricted to this
 bucket. The new SSM managed policy grants management permissions, not broad S3
 access. S3 resides outside the VPC subnets.
 
-Only HTTP/HTTPS ingress is globally open to EC2. Port 8000 remains closed.
+Only HTTP ingress is globally open to EC2. Port 8000 remains closed. TLS is
+not yet configured; restrict access to a controlled demo audience.
 RDS has no public endpoint access or globally open PostgreSQL rule.
 EC2 egress supports S3, SSM, package updates, and database connections.
 Private route tables have no default internet route.
@@ -99,8 +100,8 @@ local Terraform state and saved plans**. Keep state secure and backed up.
 Never commit real passwords, keys, terraform.tfvars, state, or plan files.
 The existing ignore rules cover them; .terraform.lock.hcl stays trackable.
 The example password is deliberately rejected until replaced privately.
-Create a limited application database role during the later deployment phase;
-the configured username is the RDS administrator.
+The configured username is the RDS administrator. Use a limited application
+database role where practical.
 
 No NAT Gateway, load balancer, extra instance, DNS service, CDN, cluster, cache,
 remote-state bucket, or paid monitoring is added. Versioning stays suspended for
@@ -168,10 +169,8 @@ Plan requires authenticated regional API reads for AZs, the SSM AMI parameter,
 EC2 type information, and PostgreSQL versions. Review actual resource counts,
 instance availability, cost, replacement actions, and resolved versions.
 
-**DO NOT run terraform apply until the infrastructure plan has been reviewed.**
-A future approved deployment may use `terraform plan -out=phase2.tfplan`,
-`terraform show phase2.tfplan`, then `terraform apply phase2.tfplan`.
-A saved plan applies without another confirmation. No apply was run here.
+**Review an infrastructure plan before any future apply.** A saved plan applies
+without another confirmation.
 
 Future teardown only after explicit authorization: `terraform plan -destroy`
 then `terraform destroy`. RDS deletion loses data under these demo settings.
@@ -184,8 +183,6 @@ Outputs include Phase 1 IDs plus EC2 ID/public IP/public DNS, RDS endpoint
 (host:port), RDS port, and database name. These are connection coordinates,
 not credentials. There is no database password or connection-URL output.
 
-Terraform fmt, fmt -check, and validate passed with the installed AWS provider.
-No AWS credentials/profile configuration was detected in this environment, so
-an authenticated plan was not run. Regional AMI resolution, PostgreSQL version,
-instance availability, and a full plan resource count remain unverified.
-No resources were created, and no application code was changed.
+Terraform resources have been deployed and the application verified on AWS.
+Run `terraform fmt -check` and `terraform validate` after source changes; these
+local checks do not inspect the current AWS state.
