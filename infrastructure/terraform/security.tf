@@ -14,15 +14,6 @@ resource "aws_vpc_security_group_ingress_rule" "http" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
-resource "aws_vpc_security_group_ingress_rule" "https" {
-  security_group_id = aws_security_group.ec2.id
-  description       = "Future public HTTPS endpoint; TLS setup is deferred"
-  ip_protocol       = "tcp"
-  from_port         = 443
-  to_port           = 443
-  cidr_ipv4         = "0.0.0.0/0"
-}
-
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   count             = var.allowed_ssh_cidr == null ? 0 : 1
   security_group_id = aws_security_group.ec2.id
