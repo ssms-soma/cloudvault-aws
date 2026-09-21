@@ -10,7 +10,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.services import database_service as database
-from app.services import s3_service as storage
+from app.services import local_storage as storage
 
 
 @pytest.fixture
@@ -47,7 +47,31 @@ def upload(client, content=b"hello", filename="report.txt"):
 def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "cloudvault-api"}
+    assert response.json() == {"status": "healthy", "database": "connected", "storage": "available"}
+
+
+def test_health_storage_unavailable(client, monkeypatch):
+    from app.services import storage as selected_storage
+
+    def fail():
+        raise OSError("private detail")
+
+    monkeypatch.setattr(selected_storage, "available", fail)
+    response = client.get("/health")
+    assert response.status_code == 503
+    assert response.json() == {"status": "unhealthy", "database": "connected", "storage": "unavailable"}
+
+
+def test_health_database_unavailable(client, monkeypatch):
+    from sqlalchemy.orm import Session
+
+    def fail(*args, **kwargs):
+        raise SQLAlchemyError("private detail")
+
+    monkeypatch.setattr(Session, "execute", fail)
+    response = client.get("/health")
+    assert response.status_code == 503
+    assert response.json() == {"status": "unhealthy", "database": "unavailable", "storage": "available"}
 
 
 @pytest.mark.parametrize("method,path", [

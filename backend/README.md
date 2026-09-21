@@ -1,7 +1,8 @@
 # CloudVault backend
 
-Local FastAPI document API using PostgreSQL metadata and filesystem storage.
-AWS is not used. Follow [Local Backend Setup](../README.md#local-backend-setup)
+FastAPI document API using PostgreSQL metadata and selectable filesystem or
+private S3 storage. Local filesystem storage is the default. Follow
+[Local Backend Setup](../README.md#local-backend-setup)
 to create the PostgreSQL role/database and project-root .env first.
 
 From this directory in PowerShell:
@@ -14,7 +15,9 @@ From this directory in PowerShell:
 API docs: http://localhost:8000/docs. Health: http://localhost:8000/health.
 Document upload, list, metadata, download, and delete are under /api/documents.
 Startup creates missing tables but does not migrate existing tables.
-Files are stored in backend/storage/documents/ and ignored by Git.
+Local files are stored in backend/storage/documents/ and ignored by Git.
+For AWS mode, set STORAGE_BACKEND=s3, AWS_REGION, S3_BUCKET_NAME, and an RDS
+DATABASE_URL. EC2 should obtain AWS credentials from its instance profile.
 
 Run focused tests:
 

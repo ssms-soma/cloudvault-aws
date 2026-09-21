@@ -1,15 +1,19 @@
 """CloudVault API entry point."""
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.api.routes.document_routes import router as document_router
 from app.core.config import settings
 from app.db.base import Base
-from app.db.session import get_engine
+from app.db.session import get_engine, get_db
+from app.services import storage
 from app.models.document import Document  # Register table metadata before create_all.
 
 
@@ -48,7 +52,25 @@ async def storage_error(request: Request, exc: OSError):
     return JSONResponse(status_code=500, content={"detail": "File storage operation failed"})
 
 
+@app.exception_handler(BotoCoreError)
+@app.exception_handler(ClientError)
+async def s3_error(request: Request, exc: Exception):
+    return JSONResponse(status_code=503, content={"detail": "File storage operation failed"})
+
+
 @app.get("/health", tags=["health"])
-def health() -> dict[str, str]:
-    """Report API availability; this is not a database readiness probe."""
-    return {"status": "ok", "service": "cloudvault-api"}
+def health(db: Session = Depends(get_db)):
+    """Check database and selected storage without returning connection details."""
+    database_status = "connected"
+    storage_status = "available"
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        database_status = "unavailable"
+    try:
+        storage.available()
+    except Exception:
+        storage_status = "unavailable"
+    result = {"status": "healthy" if database_status == "connected" and storage_status == "available" else "unhealthy",
+              "database": database_status, "storage": storage_status}
+    return result if result["status"] == "healthy" else JSONResponse(status_code=503, content=result)

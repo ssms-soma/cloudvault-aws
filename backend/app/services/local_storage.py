@@ -1,4 +1,4 @@
-"""Local storage for this phase. Replace these operations with S3 later."""
+"""Local filesystem storage for development and tests."""
 import re
 from contextlib import contextmanager
 from pathlib import Path

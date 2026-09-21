@@ -1,15 +1,16 @@
-"""Local document upload, metadata, download, and deletion."""
+"""Document upload, metadata, download, and deletion."""
 from pathlib import PurePosixPath
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.document import DocumentResponse
 from app.services import database_service as database
-from app.services import s3_service as storage
+from app.services import storage
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 Database = Annotated[Session, Depends(get_db)]
@@ -67,12 +68,24 @@ def get_document(document_id: int, db: Database):
 @router.get("/{document_id}/download")
 def download_document(document_id: int, db: Database):
     document = require_document(db, document_id)
-    if not storage.file_exists(document.storage_key):
+    try:
+        body = storage.open_file(document.storage_key)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Document file not found")
-    return FileResponse(
-        storage.get_file_path(document.storage_key),
-        filename=document.original_filename,
-        media_type="application/octet-stream",
+
+    def chunks():
+        try:
+            while chunk := body.read(64 * 1024):
+                yield chunk
+        finally:
+            body.close()
+
+    name = document.original_filename
+    fallback = name.encode("ascii", "ignore").decode().replace('"', "") or "download"
+    disposition = f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(name)}'
+    return StreamingResponse(
+        chunks(), media_type="application/octet-stream",
+        headers={"Content-Disposition": disposition},
     )
 
 
