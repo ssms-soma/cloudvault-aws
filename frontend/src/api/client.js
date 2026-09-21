@@ -1,4 +1,5 @@
-export const API_BASE_URL = 'http://localhost:8000';
+// Empty in production: Nginx serves the UI and proxies /api on the same origin.
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
 async function request(path, options, failureMessage) {
   let response;
